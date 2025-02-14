@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/storage/pkg/unshare"
-	"github.com/syndtr/gocapability/capability"
+	"github.com/moby/sys/capability"
 )
 
 var neededCapabilities = []capability.Cap{
@@ -21,29 +22,32 @@ func maybeReexec() error {
 	// With Skopeo we need only the subset of the root capabilities necessary
 	// for pulling an image to the storage.  Do not attempt to create a namespace
 	// if we already have the capabilities we need.
-	capabilities, err := capability.NewPid(0)
+	capabilities, err := capability.NewPid2(0)
 	if err != nil {
 		return fmt.Errorf("error reading the current capabilities sets: %w", err)
 	}
-	for _, cap := range neededCapabilities {
-		if !capabilities.Get(capability.EFFECTIVE, cap) {
-			// We miss a capability we need, create a user namespaces
-			unshare.MaybeReexecUsingUserNamespace(true)
-			return nil
-		}
+	if err := capabilities.Load(); err != nil {
+		return fmt.Errorf("error loading the current capabilities sets: %w", err)
+	}
+	if slices.ContainsFunc(neededCapabilities, func(cap capability.Cap) bool {
+		return !capabilities.Get(capability.EFFECTIVE, cap)
+	}) {
+		// We miss a capability we need, create a user namespaces
+		unshare.MaybeReexecUsingUserNamespace(true)
+		return nil
 	}
 	return nil
 }
 
 func reexecIfNecessaryForImages(imageNames ...string) error {
 	// Check if container-storage is used before doing unshare
-	for _, imageName := range imageNames {
+	if slices.ContainsFunc(imageNames, func(imageName string) bool {
 		transport := alltransports.TransportFromImageName(imageName)
 		// Hard-code the storage name to avoid a reference on c/image/storage.
 		// See https://github.com/containers/skopeo/issues/771#issuecomment-563125006.
-		if transport != nil && transport.Name() == "containers-storage" {
-			return maybeReexec()
-		}
+		return transport != nil && transport.Name() == "containers-storage"
+	}) {
+		return maybeReexec()
 	}
 	return nil
 }

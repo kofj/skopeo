@@ -1,7 +1,7 @@
 % skopeo-standalone-sign(1)
 
 ## NAME
-skopeo\-standalone-sign - Debugging tool - Publish and sign an image in one step.
+skopeo\-standalone-sign - Debugging tool - Sign an image locally without uploading.
 
 ## SYNOPSIS
 **skopeo standalone-sign** [*options*] _manifest_ _docker-reference_ _key-fingerprint_ **--output**|**-o** _signature_
@@ -17,6 +17,8 @@ This is primarily a debugging tool, useful for special cases, and usually should
 
 ## OPTIONS
 
+See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
+
 **--help**, **-h**
 
 Print usage statement
@@ -31,7 +33,7 @@ The passphare to use when signing with the key ID from `--sign-by`. Only the fir
 
 ## EXAMPLES
 
-```sh
+```console
 $ skopeo standalone-sign busybox-manifest.json registry.example.com/example/busybox 1D8230F6CDB6A06716E414C1DB72F2188BB46CC8 --output busybox.signature
 $
 ```

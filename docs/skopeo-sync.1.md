@@ -8,10 +8,7 @@ skopeo\-sync - Synchronize images between registry repositories and local direct
 **skopeo sync** [*options*] --src _transport_ --dest _transport_ _source_ _destination_
 
 ## DESCRIPTION
-Synchronize images between registry repoositories and local directories.
-The synchronization is achieved by copying all the images found at _source_ to _destination_.
-
-Useful to synchronize a local container registry mirror, and to to populate registries running inside of air-gapped environments.
+Synchronize images between registry repositories and local directories. Synchronization is achieved by copying all the images found at _source_ to _destination_ - useful when synchronizing a local container registry mirror or for populating registries running inside of air-gapped environments.
 
 Differently from other skopeo commands, skopeo sync requires both source and destination transports to be specified separately from _source_ and _destination_.
 One of the problems of prefixing a destination with its transport is that, the registry `docker://hostname:port` would be wrongly interpreted as an image reference at a non-fully qualified registry, with `hostname` and `port` the image name and tag.
@@ -32,6 +29,9 @@ When the `--scoped` option is specified, images are prefixed with the source ima
 name can be stored at _destination_.
 
 ## OPTIONS
+
+See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
+
 **--all**, **-a**
 If one of the images in __src__ refers to a list of images, instead of copying just the image which matches the current OS and
 architecture (subject to the use of the global --override-os, --override-arch and --override-variant options), attempt to copy all of
@@ -66,13 +66,34 @@ Print usage statement.
 
 **--scoped** Prefix images with the source image path, so that multiple images with the same name can be stored at _destination_.
 
-**--preserve-digests** Preserve the digests during copying. Fail if the digest cannot be preserved. Consider using `--all` at the same time.
+**--append-suffix** _tag-suffix_ String to append to destination tags.
+
+**--digestfile** _path_
+
+After copying the images from source, write the digest of the resulting images along with Image Reference.
+
+```
+sha256:bf91f90823248017a4f920fb541727fa8368dc6cf377a7debbd271cf6a31c8a7 docker://myhost.com/alpine:edge
+sha256:31603596830fc7e56753139f9c2c6bd3759e48a850659506ebfb885d1cf3aef5 docker://myhost.com/postgres:14.3
+
+```
+
+**--preserve-digests**
+
+Preserve the digests during copying. Fail if the digest cannot be preserved.
+
+This option does not change what will be copied; consider using `--all` at the same time.
 
 **--remove-signatures** Do not copy signatures, if any, from _source-image_. This is necessary when copying a signed image to a destination which does not support signatures.
 
 **--sign-by** _key-id_
 
 Add a “simple signing” signature using that key ID for an image name corresponding to _destination-image_
+
+**--sign-by-sigstore** _param-file_
+
+Add a sigstore signature based on the options in the specified containers sigstore signing parameter file, _param-file_.
+See containers-sigstore-signing-params.yaml(5) for details about the file format.
 
 **--sign-by-sigstore-private-key** _path_
 
@@ -102,7 +123,13 @@ The passphare to use when signing with `--sign-by` or `--sign-by-sigstore-privat
 
 **--dest-registry-token** _Bearer token_ for accessing the destination registry.
 
-**--retry-times**  the number of times to retry, retry wait time will be exponentially increased based on the number of failed attempts.
+**--retry-times**
+
+The number of times to retry.
+
+**--retry-delay**
+
+Fixed delay between retries. If not set (or set to 0s), retry wait time will be exponentially increased based on the number of failed attempts.
 
 **--keep-going**
 If any errors occur during copying of images, those errors are logged and the process continues syncing rest of the images and finally fails at the end.
@@ -126,7 +153,7 @@ The password to access the destination registry.
 ## EXAMPLES
 
 ### Synchronizing to a local directory
-```
+```console
 $ skopeo sync --src docker --dest dir registry.example.com/busybox /media/usb
 ```
 Images are located at:
@@ -144,7 +171,7 @@ Images are located at:
 /media/usb/busybox:1-glibc
 ```
 Sync run
-```
+```console
 $ skopeo sync --src dir --dest docker /media/usb/busybox:1-glibc my-registry.local.lan/test/
 ```
 Destination registry content:
@@ -154,7 +181,7 @@ my-registry.local.lan/test/busybox   1-glibc
 ```
 
 ### Synchronizing to a local directory, scoped
-```
+```console
 $ skopeo sync --src docker --dest dir --scoped registry.example.com/busybox /media/usb
 ```
 Images are located at:
@@ -167,8 +194,8 @@ Images are located at:
 ```
 
 ### Synchronizing to a container registry
-```
-skopeo sync --src docker --dest docker registry.example.com/busybox my-registry.local.lan
+```console
+$ skopeo sync --src docker --dest docker registry.example.com/busybox my-registry.local.lan
 ```
 Destination registry content:
 ```
@@ -177,13 +204,23 @@ registry.local.lan/busybox   1-glibc, 1-musl, 1-ubuntu, ..., latest
 ```
 
 ### Synchronizing to a container registry keeping the repository
-```
-skopeo sync --src docker --dest docker registry.example.com/repo/busybox my-registry.local.lan/repo
+```console
+$ skopeo sync --src docker --dest docker registry.example.com/repo/busybox my-registry.local.lan/repo
 ```
 Destination registry content:
 ```
 REPO                              TAGS
 registry.local.lan/repo/busybox   1-glibc, 1-musl, 1-ubuntu, ..., latest
+```
+
+### Synchronizing to a container registry with tag suffix
+```console
+$ skopeo sync --src docker --dest docker --append-suffix '-mirror' registry.example.com/busybox my-registry.local.lan
+```
+Destination registry content:
+```
+REPO                         TAGS
+registry.local.lan/busybox   1-glibc-mirror, 1-musl-mirror, 1-ubuntu-mirror, ..., latest-mirror
 ```
 
 ### YAML file content (used _source_ for `**--src yaml**`)
@@ -198,6 +235,8 @@ registry.example.com:
             - "sha256:0000000000000000000000000000000011111111111111111111111111111111"
     images-by-tag-regex:
         nginx: ^1\.13\.[12]-alpine-perl$
+    images-by-semver:
+        alpine: ">= 3.12.0"
     credentials:
         username: john
         password: this is a secret
@@ -210,14 +249,22 @@ quay.io:
             - latest
 ```
 If the yaml filename is `sync.yml`, sync run:
-```
-skopeo sync --src yaml --dest docker sync.yml my-registry.local.lan/repo/
+```console
+$ skopeo sync --src yaml --dest docker sync.yml my-registry.local.lan/repo/
 ```
 This will copy the following images:
 - Repository `registry.example.com/busybox`: all images, as no tags are specified.
 - Repository `registry.example.com/redis`: images tagged "1.0" and "2.0" along with image with digest "sha256:0000000000000000000000000000000011111111111111111111111111111111".
 - Repository `registry.example.com/nginx`: images tagged "1.13.1-alpine-perl" and "1.13.2-alpine-perl".
 - Repository `quay.io/coreos/etcd`: images tagged "latest".
+- Repository `registry.example.com/alpine`: all images with tags match the semantic version constraint ">= 3.12.0" ("3.12.0, "3.12.1", ... ,"4.0.0", ...)
+
+The full list of possible semantic version comparisons can be found in the
+upstream library's documentation:
+https://github.com/Masterminds/semver/tree/v3.2.0#basic-comparisons.
+
+Version ordering and precedence is understood as defined here:
+https://semver.org/#spec-item-11.
 
 For the registry `registry.example.com`, the "john"/"this is a secret" credentials are used, with server TLS certificates located at `/home/john/certs`.
 

@@ -155,7 +155,7 @@ END_PUSH
     done <<END_TESTS
 /myns/alice:signed
 /myns/bob:signedbyalice    Invalid GPG signature
-/myns/alice:unsigned       Signature for identity localhost:5000/myns/alice:signed is not accepted
+/myns/alice:unsigned       Signature for identity \\\\\\\\"localhost:5000/myns/alice:signed\\\\\\\\" is not accepted
 /myns/carol:latest         Running image docker://localhost:5000/myns/carol:latest is rejected by policy.
 /open/forall:latest
 END_TESTS
@@ -242,7 +242,7 @@ END_TESTS
                $fingerprint \
                $TESTDIR/busybox.signature
     # manifest digest
-    digest=$(echo "$output" | awk '{print $4;}')
+    digest=$(echo "$output" | awk '{print $NF;}')
     run_skopeo manifest-digest $TESTDIR/busybox/manifest.json
     expect_output $digest
 }

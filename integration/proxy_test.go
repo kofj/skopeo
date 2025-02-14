@@ -9,16 +9,18 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"testing"
 	"time"
-
-	"gopkg.in/check.v1"
 
 	"github.com/containers/image/v5/manifest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 // This image is known to be x86_64 only right now
-const knownNotManifestListedImage_x8664 = "docker://quay.io/coreos/11bot"
+const knownNotManifestListedImageX8664 = "docker://quay.io/coreos/11bot"
 
 // knownNotExtantImage would be very surprising if it did exist
 const knownNotExtantImage = "docker://quay.io/centos/centos:opensusewindowsubuntu"
@@ -32,7 +34,7 @@ type request struct {
 	// Method is the name of the function
 	Method string `json:"method"`
 	// Args is the arguments (parsed inside the function)
-	Args []interface{} `json:"args"`
+	Args []any `json:"args"`
 }
 
 // reply is copied from proxy.go
@@ -40,7 +42,7 @@ type reply struct {
 	// Success is true if and only if the call succeeded.
 	Success bool `json:"success"`
 	// Value is an arbitrary value (or values, as array/map) returned from the call.
-	Value interface{} `json:"value"`
+	Value any `json:"value"`
 	// PipeID is an index into open pipes, and should be passed to FinishPipe
 	PipeID uint32 `json:"pipeid"`
 	// Error should be non-empty if Success == false
@@ -60,7 +62,7 @@ type pipefd struct {
 	fd *os.File
 }
 
-func (p *proxy) call(method string, args []interface{}) (rval interface{}, fd *pipefd, err error) {
+func (p *proxy) call(method string, args []any) (rval any, fd *pipefd, err error) {
 	req := request{
 		Method: method,
 		Args:   args,
@@ -81,7 +83,7 @@ func (p *proxy) call(method string, args []interface{}) (rval interface{}, fd *p
 	replybuf := make([]byte, maxMsgSize)
 	n, oobn, _, _, err := p.c.ReadMsgUnix(replybuf, oob)
 	if err != nil {
-		err = fmt.Errorf("reading reply: %v", err)
+		err = fmt.Errorf("reading reply: %w", err)
 		return
 	}
 	var reply reply
@@ -99,7 +101,7 @@ func (p *proxy) call(method string, args []interface{}) (rval interface{}, fd *p
 		var scms []syscall.SocketControlMessage
 		scms, err = syscall.ParseSocketControlMessage(oob[:oobn])
 		if err != nil {
-			err = fmt.Errorf("failed to parse control message: %v", err)
+			err = fmt.Errorf("failed to parse control message: %w", err)
 			return
 		}
 		if len(scms) != 1 {
@@ -109,7 +111,7 @@ func (p *proxy) call(method string, args []interface{}) (rval interface{}, fd *p
 		var fds []int
 		fds, err = syscall.ParseUnixRights(&scms[0])
 		if err != nil {
-			err = fmt.Errorf("failed to parse unix rights: %v", err)
+			err = fmt.Errorf("failed to parse unix rights: %w", err)
 			return
 		}
 		fd = &pipefd{
@@ -122,7 +124,7 @@ func (p *proxy) call(method string, args []interface{}) (rval interface{}, fd *p
 	return
 }
 
-func (p *proxy) callNoFd(method string, args []interface{}) (rval interface{}, err error) {
+func (p *proxy) callNoFd(method string, args []any) (rval any, err error) {
 	var fd *pipefd
 	rval, fd, err = p.call(method, args)
 	if err != nil {
@@ -135,7 +137,7 @@ func (p *proxy) callNoFd(method string, args []interface{}) (rval interface{}, e
 	return rval, nil
 }
 
-func (p *proxy) callReadAllBytes(method string, args []interface{}) (rval interface{}, buf []byte, err error) {
+func (p *proxy) callReadAllBytes(method string, args []any) (rval any, buf []byte, err error) {
 	var fd *pipefd
 	rval, fd, err = p.call(method, args)
 	if err != nil {
@@ -153,7 +155,7 @@ func (p *proxy) callReadAllBytes(method string, args []interface{}) (rval interf
 			err:     err,
 		}
 	}()
-	_, err = p.callNoFd("FinishPipe", []interface{}{fd.id})
+	_, err = p.callNoFd("FinishPipe", []any{fd.id})
 	if err != nil {
 		return
 	}
@@ -214,17 +216,12 @@ func newProxy() (*proxy, error) {
 	return p, nil
 }
 
-func init() {
-	check.Suite(&ProxySuite{})
+func TestProxy(t *testing.T) {
+	suite.Run(t, &proxySuite{})
 }
 
-type ProxySuite struct {
-}
-
-func (s *ProxySuite) SetUpSuite(c *check.C) {
-}
-
-func (s *ProxySuite) TearDownSuite(c *check.C) {
+type proxySuite struct {
+	suite.Suite
 }
 
 type byteFetch struct {
@@ -233,7 +230,7 @@ type byteFetch struct {
 }
 
 func runTestGetManifestAndConfig(p *proxy, img string) error {
-	v, err := p.callNoFd("OpenImage", []interface{}{knownNotManifestListedImage_x8664})
+	v, err := p.callNoFd("OpenImage", []any{img})
 	if err != nil {
 		return err
 	}
@@ -242,13 +239,13 @@ func runTestGetManifestAndConfig(p *proxy, img string) error {
 	if !ok {
 		return fmt.Errorf("OpenImage return value is %T", v)
 	}
-	imgid := uint32(imgidv)
+	imgid := uint64(imgidv)
 	if imgid == 0 {
 		return fmt.Errorf("got zero from expected image")
 	}
 
 	// Also verify the optional path
-	v, err = p.callNoFd("OpenImageOptional", []interface{}{knownNotManifestListedImage_x8664})
+	v, err = p.callNoFd("OpenImageOptional", []any{img})
 	if err != nil {
 		return err
 	}
@@ -257,17 +254,17 @@ func runTestGetManifestAndConfig(p *proxy, img string) error {
 	if !ok {
 		return fmt.Errorf("OpenImageOptional return value is %T", v)
 	}
-	imgid2 := uint32(imgidv)
+	imgid2 := uint64(imgidv)
 	if imgid2 == 0 {
 		return fmt.Errorf("got zero from expected image")
 	}
 
-	_, err = p.callNoFd("CloseImage", []interface{}{imgid2})
+	_, err = p.callNoFd("CloseImage", []any{imgid2})
 	if err != nil {
 		return err
 	}
 
-	_, manifestBytes, err := p.callReadAllBytes("GetManifest", []interface{}{imgid})
+	_, manifestBytes, err := p.callReadAllBytes("GetManifest", []any{imgid})
 	if err != nil {
 		return err
 	}
@@ -276,7 +273,7 @@ func runTestGetManifestAndConfig(p *proxy, img string) error {
 		return err
 	}
 
-	_, configBytes, err := p.callReadAllBytes("GetFullConfig", []interface{}{imgid})
+	_, configBytes, err := p.callReadAllBytes("GetFullConfig", []any{imgid})
 	if err != nil {
 		return err
 	}
@@ -295,7 +292,7 @@ func runTestGetManifestAndConfig(p *proxy, img string) error {
 	}
 
 	// Also test this legacy interface
-	_, ctrconfigBytes, err := p.callReadAllBytes("GetConfig", []interface{}{imgid})
+	_, ctrconfigBytes, err := p.callReadAllBytes("GetConfig", []any{imgid})
 	if err != nil {
 		return err
 	}
@@ -310,7 +307,7 @@ func runTestGetManifestAndConfig(p *proxy, img string) error {
 		return fmt.Errorf("No CMD or ENTRYPOINT set")
 	}
 
-	_, err = p.callNoFd("CloseImage", []interface{}{imgid})
+	_, err = p.callNoFd("CloseImage", []any{imgid})
 	if err != nil {
 		return err
 	}
@@ -319,7 +316,7 @@ func runTestGetManifestAndConfig(p *proxy, img string) error {
 }
 
 func runTestOpenImageOptionalNotFound(p *proxy, img string) error {
-	v, err := p.callNoFd("OpenImageOptional", []interface{}{img})
+	v, err := p.callNoFd("OpenImageOptional", []any{img})
 	if err != nil {
 		return err
 	}
@@ -328,32 +325,33 @@ func runTestOpenImageOptionalNotFound(p *proxy, img string) error {
 	if !ok {
 		return fmt.Errorf("OpenImageOptional return value is %T", v)
 	}
-	imgid := uint32(imgidv)
+	imgid := uint64(imgidv)
 	if imgid != 0 {
 		return fmt.Errorf("Unexpected optional image id %v", imgid)
 	}
 	return nil
 }
 
-func (s *ProxySuite) TestProxy(c *check.C) {
+func (s *proxySuite) TestProxy() {
+	t := s.T()
 	p, err := newProxy()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
-	err = runTestGetManifestAndConfig(p, knownNotManifestListedImage_x8664)
+	err = runTestGetManifestAndConfig(p, knownNotManifestListedImageX8664)
 	if err != nil {
-		err = fmt.Errorf("Testing image %s: %v", knownNotManifestListedImage_x8664, err)
+		err = fmt.Errorf("Testing image %s: %v", knownNotManifestListedImageX8664, err)
 	}
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 
 	err = runTestGetManifestAndConfig(p, knownListImage)
 	if err != nil {
 		err = fmt.Errorf("Testing image %s: %v", knownListImage, err)
 	}
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 
 	err = runTestOpenImageOptionalNotFound(p, knownNotExtantImage)
 	if err != nil {
 		err = fmt.Errorf("Testing optional image %s: %v", knownNotExtantImage, err)
 	}
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 }

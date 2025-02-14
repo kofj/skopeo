@@ -1,7 +1,6 @@
-skopeo [![Build Status](https://travis-ci.org/containers/skopeo.svg?branch=master)](https://travis-ci.org/containers/skopeo)
-=
-
-<img src="https://cdn.rawgit.com/containers/skopeo/master/docs/skopeo.svg" width="250">
+<p align="center">
+   <img src="https://cdn.rawgit.com/containers/skopeo/main/docs/skopeo.svg" width="250" alt="Skopeo">
+</p>
 
 ----
 
@@ -42,6 +41,14 @@ Skopeo works with API V2 container image registries such as [docker.io](https://
  * oci:path:tag
          An image tag in a directory compliant with "Open Container Image Layout Specification" at path.
 
+[Obtaining skopeo](./install.md)
+-
+
+For a detailed description how to install or build skopeo, see
+[install.md](./install.md).
+
+Skopeo is also available as a Container Image on [quay.io](https://quay.io/skopeo/stable).  For more information, see the [Skopeo Image](https://github.com/containers/image_build/blob/main/skopeo/README.md) page.
+
 ## Inspecting a repository
 `skopeo` is able to _inspect_ a repository on a container registry and fetch images layers.
 The _inspect_ command fetches the repository's manifest and it is able to show you a `docker inspect`-like
@@ -56,29 +63,37 @@ Examples:
 $ skopeo inspect docker://registry.fedoraproject.org/fedora:latest
 {
     "Name": "registry.fedoraproject.org/fedora",
-    "Digest": "sha256:655721ff613ee766a4126cb5e0d5ae81598e1b0c3bcf7017c36c4d72cb092fe9",
+    "Digest": "sha256:0f65bee641e821f8118acafb44c2f8fe30c2fc6b9a2b3729c0660376391aa117",
     "RepoTags": [
-        "24",
-        "25",
-        "26-modular",
-	...
+        "34-aarch64",
+        "34",
+        "latest",
+        ...
     ],
-    "Created": "2020-04-29T06:48:16Z",
+    "Created": "2022-11-24T13:54:18Z",
     "DockerVersion": "1.10.1",
     "Labels": {
         "license": "MIT",
         "name": "fedora",
         "vendor": "Fedora Project",
-        "version": "32"
+        "version": "37"
     },
     "Architecture": "amd64",
     "Os": "linux",
     "Layers": [
-        "sha256:3088721d7dbf674fc0be64cd3cf00c25aab921cacf35fa0e7b1578500a3e1653"
+        "sha256:2a0fc6bf62e155737f0ace6142ee686f3c471c1aab4241dc3128904db46288f0"
+    ],
+    "LayersData": [
+        {
+            "MIMEType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "Digest": "sha256:2a0fc6bf62e155737f0ace6142ee686f3c471c1aab4241dc3128904db46288f0",
+            "Size": 71355009,
+            "Annotations": null
+        }
     ],
     "Env": [
-        "DISTTAG=f32container",
-        "FGC=f32",
+        "DISTTAG=f37container",
+        "FGC=f37",
         "container=oci"
     ]
 }
@@ -184,12 +199,6 @@ $ skopeo inspect --creds=testuser:testpassword docker://myregistrydomain.com:500
 $ skopeo copy --src-creds=testuser:testpassword docker://myregistrydomain.com:5000/private oci:local_oci_image
 ```
 
-[Obtaining skopeo](./install.md)
--
-
-For a detailed description how to install or build skopeo, see
-[install.md](./install.md).
-
 Contributing
 -
 
@@ -200,13 +209,14 @@ Please read the [contribution guide](CONTRIBUTING.md) if you want to collaborate
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------------|
 | [skopeo-copy(1)](/docs/skopeo-copy.1.md)           | Copy an image (manifest, filesystem layers, signatures) from one location to another.        |
 | [skopeo-delete(1)](/docs/skopeo-delete.1.md)       | Mark the image-name for later deletion by the registry's garbage collector.                                                                |
+| [skopeo-generate-sigstore-key(1)](/docs/skopeo-generate-sigstore-key.1.md)    | Generate a sigstore public/private key pair.  |
 | [skopeo-inspect(1)](/docs/skopeo-inspect.1.md)     | Return  low-level  information about image-name in a registry.                                |
 | [skopeo-list-tags(1)](/docs/skopeo-list-tags.1.md) | Return a list of tags for the transport-specific image repository.                               |
 | [skopeo-login(1)](/docs/skopeo-login.1.md)         | Login to a container registry.                                                               |
 | [skopeo-logout(1)](/docs/skopeo-logout.1.md)       | Logout of a container registry.                                                              |
 | [skopeo-manifest-digest(1)](/docs/skopeo-manifest-digest.1.md)    | Compute a manifest digest for a manifest-file and write it to standard output.   |
-| [skopeo-standalone-sign(1)](/docs/skopeo-standalone-sign.1.md)    | Debugging tool - Publish and sign an image in one step.                                                         |
-| [skopeo-standalone-verify(1)](/docs/skopeo-standalone-verify.1.md)| Verify an image signature.                                                    |
+| [skopeo-standalone-sign(1)](/docs/skopeo-standalone-sign.1.md)    | Debugging tool - Sign an image locally without uploading.                     |
+| [skopeo-standalone-verify(1)](/docs/skopeo-standalone-verify.1.md)| Debugging tool - Verify an image signature from local files.                  |
 | [skopeo-sync(1)](/docs/skopeo-sync.1.md)           | Synchronize images between registry repositories and local directories.                      |
 
 License

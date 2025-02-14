@@ -55,14 +55,12 @@ func createApp() (*cobra.Command, *globalOptions) {
 	opts := globalOptions{}
 
 	rootCommand := &cobra.Command{
-		Use:  "skopeo",
-		Long: "Various operations with container images and container image registries",
-		RunE: requireSubcommand,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return opts.before(cmd)
-		},
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Use:               "skopeo",
+		Long:              "Various operations with container images and container image registries",
+		RunE:              requireSubcommand,
+		PersistentPreRunE: opts.before,
+		SilenceUsage:      true,
+		SilenceErrors:     true,
 		// Hide the completion command which is provided by cobra
 		CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 		// This is documented to parse "local" (non-PersistentFlags) flags of parent commands before
@@ -98,6 +96,7 @@ func createApp() (*cobra.Command, *globalOptions) {
 	rootCommand.AddCommand(
 		copyCmd(&opts),
 		deleteCmd(&opts),
+		generateSigstoreKeyCmd(),
 		inspectCmd(&opts),
 		layersCmd(&opts),
 		loginCmd(&opts),
@@ -114,7 +113,7 @@ func createApp() (*cobra.Command, *globalOptions) {
 }
 
 // before is run by the cli package for any command, before running the command-specific handler.
-func (opts *globalOptions) before(cmd *cobra.Command) error {
+func (opts *globalOptions) before(cmd *cobra.Command, args []string) error {
 	if opts.debug {
 		logrus.SetLevel(logrus.DebugLevel)
 	}
@@ -130,6 +129,10 @@ func main() {
 	}
 	rootCmd, _ := createApp()
 	if err := rootCmd.Execute(); err != nil {
+		if isNotFoundImageError(err) {
+			logrus.StandardLogger().Log(logrus.FatalLevel, err)
+			logrus.Exit(2)
+		}
 		logrus.Fatal(err)
 	}
 }

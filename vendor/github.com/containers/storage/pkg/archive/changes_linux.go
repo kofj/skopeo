@@ -30,8 +30,8 @@ type walker struct {
 	dir2   string
 	root1  *FileInfo
 	root2  *FileInfo
-	idmap1 *idtools.IDMappings
-	idmap2 *idtools.IDMappings
+	idmap1 *idtools.IDMappings //nolint:unused
+	idmap2 *idtools.IDMappings //nolint:unused
 }
 
 // collectFileInfoForChanges returns a complete representation of the trees
@@ -79,6 +79,7 @@ func walkchunk(path string, fi os.FileInfo, dir string, root *FileInfo) error {
 		children:   make(map[string]*FileInfo),
 		parent:     parent,
 		idMappings: root.idMappings,
+		target:     "",
 	}
 	cpath := filepath.Join(dir, path)
 	stat, err := system.FromStatT(fi.Sys().(*syscall.Stat_t))
@@ -87,11 +88,11 @@ func walkchunk(path string, fi os.FileInfo, dir string, root *FileInfo) error {
 	}
 	info.stat = stat
 	info.capability, err = system.Lgetxattr(cpath, "security.capability") // lgetxattr(2): fs access
-	if err != nil && !errors.Is(err, system.EOPNOTSUPP) {
+	if err != nil && !errors.Is(err, system.ENOTSUP) {
 		return err
 	}
 	xattrs, err := system.Llistxattr(cpath)
-	if err != nil && !errors.Is(err, system.EOPNOTSUPP) {
+	if err != nil && !errors.Is(err, system.ENOTSUP) {
 		return err
 	}
 	for _, key := range xattrs {
@@ -108,6 +109,12 @@ func walkchunk(path string, fi os.FileInfo, dir string, root *FileInfo) error {
 				info.xattrs = make(map[string]string)
 			}
 			info.xattrs[key] = string(value)
+		}
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		info.target, err = os.Readlink(cpath)
+		if err != nil {
+			return err
 		}
 	}
 	parent.children[info.name] = info
@@ -316,7 +323,11 @@ func parseDirent(buf []byte, names []nameIno) (consumed int, newnames []nameIno)
 // with respect to the parent layers
 func OverlayChanges(layers []string, rw string) ([]Change, error) {
 	dc := func(root, path string, fi os.FileInfo) (string, error) {
-		return overlayDeletedFile(layers, root, path, fi)
+		r, err := overlayDeletedFile(layers, root, path, fi)
+		if err != nil {
+			return "", fmt.Errorf("overlay deleted file query: %w", err)
+		}
+		return r, nil
 	}
 	return changes(layers, rw, dc, nil, overlayLowerContainsWhiteout)
 }
@@ -351,7 +362,7 @@ func overlayDeletedFile(layers []string, root, path string, fi os.FileInfo) (str
 	// If the directory isn't marked as opaque, then it's just a normal directory.
 	opaque, err := system.Lgetxattr(filepath.Join(root, path), getOverlayOpaqueXattrName())
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed querying overlay opaque xattr: %w", err)
 	}
 	if len(opaque) != 1 || opaque[0] != 'y' {
 		return "", err
@@ -397,5 +408,4 @@ func overlayDeletedFile(layers []string, root, path string, fi os.FileInfo) (str
 
 	// We didn't find the same path in any older layers, so it was new in this one.
 	return "", nil
-
 }

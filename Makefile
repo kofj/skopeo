@@ -24,6 +24,11 @@ GOBIN := $(shell $(GO) env GOBIN)
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
+# N/B: This value is managed by Renovate, manual changes are
+# possible, as long as they don't disturb the formatting
+# (i.e. DO NOT ADD A 'v' prefix!)
+GOLANGCI_LINT_VERSION := 1.64.5
+
 ifeq ($(GOBIN),)
 GOBIN := $(GOPATH)/bin
 endif
@@ -38,13 +43,6 @@ endif
 export CONTAINER_RUNTIME ?= $(if $(shell command -v podman ;),podman,docker)
 GOMD2MAN ?= $(if $(shell command -v go-md2man ;),go-md2man,$(GOBIN)/go-md2man)
 
-# Go module support: set `-mod=vendor` to use the vendored sources.
-# See also hack/make.sh.
-ifeq ($(shell go help mod >/dev/null 2>&1 && echo true), true)
-  GO:=GO111MODULE=on $(GO)
-  MOD_VENDOR=-mod=vendor
-endif
-
 ifeq ($(DEBUG), 1)
   override GOGCFLAGS += -N -l
 endif
@@ -56,17 +54,11 @@ ifeq ($(GOOS), linux)
 endif
 
 # If $TESTFLAGS is set, it is passed as extra arguments to 'go test'.
-# You can increase test output verbosity with the option '-test.vv'.
-# You can select certain tests to run, with `-test.run <regex>` for example:
+# You can select certain tests to run, with `-run <regex>` for example:
 #
-#     make test-unit TESTFLAGS='-test.run ^TestManifestDigest$'
-#
-# For integration test, we use [gocheck](https://labix.org/gocheck).
-# You can increase test output verbosity with the option '-check.vv'.
-# You can limit test selection with `-check.f <regex>`, for example:
-#
-#     make test-integration TESTFLAGS='-check.f CopySuite.TestCopy.*'
-export TESTFLAGS ?= -v -check.v -test.timeout=15m
+#     make test-unit TESTFLAGS='-run ^TestManifestDigest$'
+#     make test-integration TESTFLAGS='-run copySuite.TestCopy.*'
+export TESTFLAGS ?= -timeout=15m
 
 # This is assumed to be set non-empty when operating inside a CI/automation environment
 CI ?=
@@ -99,13 +91,12 @@ MANPAGES_MD = $(wildcard docs/*.md)
 MANPAGES ?= $(MANPAGES_MD:%.md=%)
 
 BTRFS_BUILD_TAG = $(shell hack/btrfs_tag.sh) $(shell hack/btrfs_installed_tag.sh)
-LIBDM_BUILD_TAG = $(shell hack/libdm_tag.sh)
 LIBSUBID_BUILD_TAG = $(shell hack/libsubid_tag.sh)
-LOCAL_BUILD_TAGS = $(BTRFS_BUILD_TAG) $(LIBDM_BUILD_TAG) $(LIBSUBID_BUILD_TAG)
+LOCAL_BUILD_TAGS = $(BTRFS_BUILD_TAG) $(LIBSUBID_BUILD_TAG)
 BUILDTAGS += $(LOCAL_BUILD_TAGS)
 
 ifeq ($(DISABLE_CGO), 1)
-	override BUILDTAGS = exclude_graphdriver_devicemapper exclude_graphdriver_btrfs containers_image_openpgp
+	override BUILDTAGS = exclude_graphdriver_btrfs containers_image_openpgp
 endif
 
 #   make all DEBUG=1
@@ -125,6 +116,7 @@ help:
 	@echo " * 'install' - Install binaries and documents to system locations"
 	@echo " * 'binary' - Build skopeo with a container"
 	@echo " * 'bin/skopeo' - Build skopeo locally"
+	@echo " * 'bin/skopeo.OS.ARCH' - Build skopeo for specific OS and ARCH"
 	@echo " * 'test-unit' - Execute unit tests"
 	@echo " * 'test-integration' - Execute integration tests"
 	@echo " * 'validate' - Verify whether there is no conflict and all Go source files have been formatted, linted and vetted"
@@ -139,9 +131,9 @@ binary: cmd/skopeo
 # Build w/o using containers
 .PHONY: bin/skopeo
 bin/skopeo:
-	$(GO) build $(MOD_VENDOR) ${GO_DYN_FLAGS} ${SKOPEO_LDFLAGS} -gcflags "$(GOGCFLAGS)" -tags "$(BUILDTAGS)" -o $@ ./cmd/skopeo
+	$(GO) build ${GO_DYN_FLAGS} ${SKOPEO_LDFLAGS} -gcflags "$(GOGCFLAGS)" -tags "$(BUILDTAGS)" -o $@ ./cmd/skopeo
 bin/skopeo.%:
-	GOOS=$(word 2,$(subst ., ,$@)) GOARCH=$(word 3,$(subst ., ,$@)) $(GO) build $(MOD_VENDOR) ${SKOPEO_LDFLAGS} -tags "containers_image_openpgp $(BUILDTAGS)" -o $@ ./cmd/skopeo
+	GOOS=$(word 2,$(subst ., ,$@)) GOARCH=$(word 3,$(subst ., ,$@)) $(GO) build ${SKOPEO_LDFLAGS} -tags "containers_image_openpgp $(BUILDTAGS)" -o $@ ./cmd/skopeo
 local-cross: bin/skopeo.darwin.amd64 bin/skopeo.linux.arm bin/skopeo.linux.arm64 bin/skopeo.windows.386.exe bin/skopeo.windows.amd64.exe
 
 $(MANPAGES): %: %.md
@@ -194,18 +186,27 @@ install-completions: completions
 shell:
 	$(CONTAINER_RUN) bash
 
+tools:
+	if [ ! -x "$(GOBIN)/golangci-lint" ]; then \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOBIN) v$(GOLANGCI_LINT_VERSION) ; \
+	fi
+
 check: validate test-unit test-integration test-system
 
 test-integration:
-	$(CONTAINER_RUN) $(MAKE) test-integration-local
+# This is intended to be equal to $(CONTAINER_RUN), but with --cap-add=cap_mknod.
+# --cap-add=cap_mknod is important to allow skopeo to use containers-storage: directly as it exists in the callers’ environment, without
+# creating a nested user namespace (which requires /etc/subuid and /etc/subgid to be set up)
+	$(CONTAINER_CMD) --security-opt label=disable --cap-add=cap_mknod -v $(CURDIR):$(CONTAINER_GOSRC) -w $(CONTAINER_GOSRC) $(SKOPEO_CIDEV_CONTAINER_FQIN) \
+		$(MAKE) test-integration-local
 
 
 # Intended for CI, assumed to be running in quay.io/libpod/skopeo_cidev container.
 test-integration-local: bin/skopeo
-	hack/make.sh test-integration
+	hack/warn-destructive-tests.sh
+	hack/test-integration.sh
 
 # complicated set of options needed to run podman-in-podman
-# TODO: The $(RM) command will likely fail w/o `podman unshare`
 test-system:
 	DTEMP=$(shell mktemp -d --tmpdir=/var/tmp podman-tmp.XXXXXX); \
 	$(CONTAINER_CMD) --privileged \
@@ -214,12 +215,13 @@ test-system:
 		"$(SKOPEO_CIDEV_CONTAINER_FQIN)" \
 			$(MAKE) test-system-local; \
 	rc=$$?; \
-	-$(RM) -rf $$DTEMP; \
+	$(CONTAINER_RUNTIME) unshare rm -rf $$DTEMP; # This probably doesn't work with Docker, oh well, better than nothing... \
 	exit $$rc
 
 # Intended for CI, assumed to already be running in quay.io/libpod/skopeo_cidev container.
 test-system-local: bin/skopeo
-	hack/make.sh test-system
+	hack/warn-destructive-tests.sh
+	hack/test-system.sh
 
 test-unit:
 	# Just call (make test unit-local) here instead of worrying about environment differences
@@ -233,16 +235,19 @@ test-all-local: validate-local validate-docs test-unit-local
 
 .PHONY: validate-local
 validate-local:
-	BUILDTAGS="${BUILDTAGS}" hack/make.sh validate-git-marks validate-gofmt validate-lint validate-vet
+	hack/validate-git-marks.sh
+	hack/validate-gofmt.sh
+	GOBIN=$(GOBIN) hack/validate-lint.sh
+	BUILDTAGS="${BUILDTAGS}" hack/validate-vet.sh
 
 # This invokes bin/skopeo, hence cannot be run as part of validate-local
 .PHONY: validate-docs
-validate-docs:
+validate-docs: bin/skopeo
 	hack/man-page-checker
 	hack/xref-helpmsgs-manpages
 
-test-unit-local: bin/skopeo
-	$(GO) test $(MOD_VENDOR) -tags "$(BUILDTAGS)" $$($(GO) list $(MOD_VENDOR) -tags "$(BUILDTAGS)" -e ./... | grep -v '^github\.com/containers/skopeo/\(integration\|vendor/.*\)$$')
+test-unit-local:
+	$(GO) test -tags "$(BUILDTAGS)" $$($(GO) list -tags "$(BUILDTAGS)" -e ./... | grep -v '^github\.com/containers/skopeo/\(integration\|vendor/.*\)$$')
 
 vendor:
 	$(GO) mod tidy

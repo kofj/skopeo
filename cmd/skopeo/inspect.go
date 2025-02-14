@@ -5,10 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
-	"text/tabwriter"
-	"text/template"
 
 	"github.com/containers/common/pkg/report"
 	"github.com/containers/common/pkg/retry"
@@ -54,8 +51,8 @@ See skopeo(1) section "IMAGE NAMES" for the expected format
 `, strings.Join(transports.ListNames(), ", ")),
 		RunE: commandAction(opts.run),
 		Example: `skopeo inspect docker://registry.fedoraproject.org/fedora
-  skopeo inspect --config docker://docker.io/alpine
-  skopeo inspect  --format "Name: {{.Name}} Digest: {{.Digest}}" docker://registry.access.redhat.com/ubi8`,
+skopeo inspect --config docker://docker.io/alpine
+skopeo inspect --format "Name: {{.Name}} Digest: {{.Digest}}" docker://registry.access.redhat.com/ubi8`,
 		ValidArgsFunction: autocompleteSupportedTransports,
 	}
 	adjustUsage(cmd)
@@ -75,7 +72,6 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 		rawManifest []byte
 		src         types.ImageSource
 		imgInspect  *types.ImageInspectInfo
-		data        []interface{}
 	)
 	ctx, cancel := opts.global.commandTimeoutContext()
 	defer cancel()
@@ -152,18 +148,7 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 		}, opts.retryOpts); err != nil {
 			return fmt.Errorf("Error reading OCI-formatted configuration data: %w", err)
 		}
-		if report.IsJSON(opts.format) || opts.format == "" {
-			var out []byte
-			out, err = json.MarshalIndent(config, "", "    ")
-			if err == nil {
-				fmt.Fprintf(stdout, "%s\n", string(out))
-			}
-		} else {
-			row := "{{range . }}" + report.NormalizeFormat(opts.format) + "{{end}}"
-			data = append(data, config)
-			err = printTmpl(row, data)
-		}
-		if err != nil {
+		if err := opts.writeOutput(stdout, config); err != nil {
 			return fmt.Errorf("Error writing OCI-formatted configuration data to standard output: %w", err)
 		}
 		return nil
@@ -229,23 +214,23 @@ func (opts *inspectOptions) run(args []string, stdout io.Writer) (retErr error) 
 			logrus.Warnf("Registry disallows tag list retrieval; skipping")
 		}
 	}
+	return opts.writeOutput(stdout, outputData)
+}
+
+// writeOutput writes data depending on opts.format to stdout
+func (opts *inspectOptions) writeOutput(stdout io.Writer, data any) error {
 	if report.IsJSON(opts.format) || opts.format == "" {
-		out, err := json.MarshalIndent(outputData, "", "    ")
+		out, err := json.MarshalIndent(data, "", "    ")
 		if err == nil {
 			fmt.Fprintf(stdout, "%s\n", string(out))
 		}
 		return err
 	}
-	row := "{{range . }}" + report.NormalizeFormat(opts.format) + "{{end}}"
-	data = append(data, outputData)
-	return printTmpl(row, data)
-}
 
-func printTmpl(row string, data []interface{}) error {
-	t, err := template.New("skopeo inspect").Parse(row)
+	rpt, err := report.New(stdout, "skopeo inspect").Parse(report.OriginUser, opts.format)
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(os.Stdout, 8, 2, 2, ' ', 0)
-	return t.Execute(w, data)
+	defer rpt.Flush()
+	return rpt.Execute([]any{data})
 }

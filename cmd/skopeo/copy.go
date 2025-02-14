@@ -13,6 +13,8 @@ import (
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/pkg/cli"
+	"github.com/containers/image/v5/pkg/cli/sigstore"
+	"github.com/containers/image/v5/signature/signer"
 	"github.com/containers/image/v5/transports"
 	"github.com/containers/image/v5/transports/alltransports"
 	encconfig "github.com/containers/ocicrypt/config"
@@ -29,6 +31,7 @@ type copyOptions struct {
 	additionalTags           []string                  // For docker-archive: destinations, in addition to the name:tag specified as destination, also add these
 	removeSignatures         bool                      // Do not copy signatures from the source image
 	signByFingerprint        string                    // Sign the image using a GPG key with the specified fingerprint
+	signBySigstoreParamFile  string                    // Sign the image using a sigstore signature per configuration in a param file
 	signBySigstorePrivateKey string                    // Sign the image using a sigstore private key
 	signPassphraseFile       string                    // Path pointing to a passphrase file when signing (for either signature format, but only one of them)
 	signIdentity             string                    // Identity of the signed image, must be a fully specified docker reference
@@ -41,6 +44,7 @@ type copyOptions struct {
 	encryptLayer             []int                     // The list of layers to encrypt
 	encryptionKeys           []string                  // Keys needed to encrypt the image
 	decryptionKeys           []string                  // Keys needed to decrypt the image
+	imageParallelCopies      uint                      // Maximum number of parallel requests when copying images
 }
 
 func copyCmd(global *globalOptions) *cobra.Command {
@@ -83,6 +87,7 @@ See skopeo(1) section "IMAGE NAMES" for the expected format
 	flags.BoolVar(&opts.preserveDigests, "preserve-digests", false, "Preserve digests of images and lists")
 	flags.BoolVar(&opts.removeSignatures, "remove-signatures", false, "Do not copy signatures from SOURCE-IMAGE")
 	flags.StringVar(&opts.signByFingerprint, "sign-by", "", "Sign the image using a GPG key with the specified `FINGERPRINT`")
+	flags.StringVar(&opts.signBySigstoreParamFile, "sign-by-sigstore", "", "Sign the image using a sigstore parameter file at `PATH`")
 	flags.StringVar(&opts.signBySigstorePrivateKey, "sign-by-sigstore-private-key", "", "Sign the image using a sigstore private key at `PATH`")
 	flags.StringVar(&opts.signPassphraseFile, "sign-passphrase-file", "", "Read a passphrase for signing an image from `PATH`")
 	flags.StringVar(&opts.signIdentity, "sign-identity", "", "Identity of signed image, must be a fully specified docker reference. Defaults to the target docker reference.")
@@ -91,6 +96,7 @@ See skopeo(1) section "IMAGE NAMES" for the expected format
 	flags.StringSliceVar(&opts.encryptionKeys, "encryption-key", []string{}, "*Experimental* key with the encryption protocol to use needed to encrypt the image (e.g. jwe:/path/to/key.pem)")
 	flags.IntSliceVar(&opts.encryptLayer, "encrypt-layer", []int{}, "*Experimental* the 0-indexed layer indices, with support for negative indexing (e.g. 0 is the first layer, -1 is the last layer)")
 	flags.StringSliceVar(&opts.decryptionKeys, "decryption-key", []string{}, "*Experimental* key needed to decrypt the image")
+	flags.UintVar(&opts.imageParallelCopies, "image-parallel-copies", 0, "Maximum number of image layers to be copied (pulled/pushed) simultaneously. Not setting this field will fall back to containers/image defaults.")
 	return cmd
 }
 
@@ -252,6 +258,22 @@ func (opts *copyOptions) run(args []string, stdout io.Writer) (retErr error) {
 		passphrase = p
 	} // opts.signByFingerprint triggers a GPG-agent passphrase prompt, possibly using a more secure channel, so we usually shouldn’t prompt ourselves if no passphrase was explicitly provided.
 
+	var signers []*signer.Signer
+	if opts.signBySigstoreParamFile != "" {
+		signer, err := sigstore.NewSignerFromParameterFile(opts.signBySigstoreParamFile, &sigstore.Options{
+			PrivateKeyPassphrasePrompt: func(keyFile string) (string, error) {
+				return promptForPassphrase(keyFile, os.Stdin, os.Stdout)
+			},
+			Stdin:  os.Stdin,
+			Stdout: stdout,
+		})
+		if err != nil {
+			return fmt.Errorf("Error using --sign-by-sigstore: %w", err)
+		}
+		defer signer.Close()
+		signers = append(signers, signer)
+	}
+
 	var signIdentity reference.Named = nil
 	if opts.signIdentity != "" {
 		signIdentity, err = reference.ParseNamed(opts.signIdentity)
@@ -265,6 +287,7 @@ func (opts *copyOptions) run(args []string, stdout io.Writer) (retErr error) {
 	return retry.IfNecessary(ctx, func() error {
 		manifestBytes, err := copy.Image(ctx, policyContext, destRef, srcRef, &copy.Options{
 			RemoveSignatures:                 opts.removeSignatures,
+			Signers:                          signers,
 			SignBy:                           opts.signByFingerprint,
 			SignPassphrase:                   passphrase,
 			SignBySigstorePrivateKeyFile:     opts.signBySigstorePrivateKey,
@@ -279,6 +302,7 @@ func (opts *copyOptions) run(args []string, stdout io.Writer) (retErr error) {
 			OciDecryptConfig:                 decConfig,
 			OciEncryptLayers:                 encLayers,
 			OciEncryptConfig:                 encConfig,
+			MaxParallelDownloads:             opts.imageParallelCopies,
 		})
 		if err != nil {
 			return err

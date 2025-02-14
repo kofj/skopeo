@@ -15,6 +15,8 @@ flag. The default path used is **${XDG\_RUNTIME\_DIR}/containers/auth.json**.
 
 ## OPTIONS
 
+See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
+
 **--password**, **-p**=*password*
 
 Password for registry
@@ -33,6 +35,10 @@ Path of the authentication file. Default is ${XDG\_RUNTIME\_DIR}/containers/auth
 
 Note: You can also override the default path of the authentication file by setting the REGISTRY\_AUTH\_FILE
 environment variable. `export REGISTRY_AUTH_FILE=path`
+
+**--compat-auth-file**=*path*
+
+Instead of updating the default credentials file, update the one at *path*, and use a Docker-compatible format.
 
 **--get-login**
 
@@ -57,41 +63,41 @@ Write more detailed information to stdout
 
 ## EXAMPLES
 
-```
+```console
 $ skopeo login docker.io
 Username: testuser
 Password:
 Login Succeeded!
 ```
 
-```
+```console
 $ skopeo login -u testuser -p testpassword localhost:5000
 Login Succeeded!
 ```
 
-```
+```console
 $ skopeo login --authfile authdir/myauths.json docker.io
 Username: testuser
 Password:
 Login Succeeded!
 ```
 
-```
+```console
 $ skopeo login --tls-verify=false -u test -p test localhost:5000
 Login Succeeded!
 ```
 
-```
+```console
 $ skopeo login --cert-dir /etc/containers/certs.d/ -u foo -p bar localhost:5000
 Login Succeeded!
 ```
 
-```
+```console
 $ skopeo login -u testuser  --password-stdin < testpassword.txt docker.io
 Login Succeeded!
 ```
 
-```
+```console
 $ echo $testpassword | skopeo login -u testuser --password-stdin docker.io
 Login Succeeded!
 ```
