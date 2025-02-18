@@ -8,17 +8,20 @@ load helpers
 function setup() {
     standard_setup
 
-    # Remove old/stale cred file
-    _cred_dir=$TESTDIR/credentials
-    export XDG_RUNTIME_DIR=$_cred_dir
-    mkdir -p $_cred_dir/containers
-    rm -f $_cred_dir/containers/auth.json
-
     # Start authenticated registry with random password
     testuser=testuser
     testpassword=$(random_string 15)
 
     start_registry --testuser=$testuser --testpassword=$testpassword --enable-delete=true reg
+
+    _cred_dir=$TESTDIR/credentials
+    # It is important to change XDG_RUNTIME_DIR only after we start the registry, otherwise it affects the path of $XDG_RUNTIME_DIR/netns maintained by Podman,
+    # making it impossible to clean up after ourselves.
+    export XDG_RUNTIME_DIR_OLD=$XDG_RUNTIME_DIR
+    export XDG_RUNTIME_DIR=$_cred_dir
+    mkdir -p $_cred_dir/containers
+    # Remove old/stale cred file
+    rm -f $_cred_dir/containers/auth.json
 }
 
 @test "auth: credentials on command line" {
@@ -37,7 +40,7 @@ function setup() {
     expect_output --substring "authentication required"
 
     # Correct creds, but no such image
-    run_skopeo 1 inspect --tls-verify=false --creds=$testuser:$testpassword \
+    run_skopeo 2 inspect --tls-verify=false --creds=$testuser:$testpassword \
                docker://localhost:5000/nonesuch
     expect_output --substring "manifest unknown"
 
@@ -109,6 +112,9 @@ function setup() {
 }
 
 teardown() {
+    # Need to restore XDG_RUNTIME_DIR.
+    XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR_OLD
+
     podman rm -f reg
 
     if [[ -n $_cred_dir ]]; then

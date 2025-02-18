@@ -14,12 +14,18 @@ All the cached credentials can be removed by setting the **all** flag.
 
 ## OPTIONS
 
+See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
+
 **--authfile**=*path*
 
 Path of the authentication file. Default is ${XDG\_RUNTIME\_DIR}/containers/auth.json
 
 Note: You can also override the default path of the authentication file by setting the REGISTRY\_AUTH\_FILE
 environment variable. `export REGISTRY_AUTH_FILE=path`
+
+**--compat-auth-file**=*path*
+
+Instead of updating the default credentials file, update the one at *path*, and use a Docker-compatible format.
 
 **--all**, **-a**
 
@@ -35,17 +41,17 @@ Require HTTPS and verify certificates when talking to the container registry or 
 
 ## EXAMPLES
 
-```
+```console
 $ skopeo logout docker.io
 Remove login credentials for docker.io
 ```
 
-```
+```console
 $ skopeo logout --authfile authdir/myauths.json docker.io
 Remove login credentials for docker.io
 ```
 
-```
+```console
 $ skopeo logout --all
 Remove login credentials for all registries
 ```

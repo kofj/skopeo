@@ -16,7 +16,6 @@ func TestDockerRepositoryReferenceParser(t *testing.T) {
 		{"docker://somehost.com"},          // Valid default expansion
 		{"docker://nginx"},                 // Valid default expansion
 	} {
-
 		ref, err := parseDockerRepositoryReference(test[0])
 		require.NoError(t, err)
 		expected, err := alltransports.ParseImageName(test[0])
@@ -47,7 +46,6 @@ func TestDockerRepositoryReferenceParserDrift(t *testing.T) {
 		{"docker://somehost.com", "docker.io/library/somehost.com"}, // Valid default expansion
 		{"docker://nginx", "docker.io/library/nginx"},               // Valid default expansion
 	} {
-
 		ref, err := parseDockerRepositoryReference(test[0])
 		ref2, err2 := alltransports.ParseImageName(test[0])
 
@@ -55,4 +53,18 @@ func TestDockerRepositoryReferenceParserDrift(t *testing.T) {
 			assert.Equal(t, ref.DockerReference().String(), ref2.DockerReference().String(), "Different parsing output for input %v. Repo parse = %v, regular parser = %v", test[0], ref, ref2)
 		}
 	}
+}
+
+func TestListTags(t *testing.T) {
+	// Invalid command-line arguments
+	for _, args := range [][]string{
+		{},
+		{"a1", "a2"},
+	} {
+		out, err := runSkopeo(append([]string{"list-tags"}, args...)...)
+		assertTestFailed(t, out, err, "Exactly one non-option argument expected")
+	}
+
+	// FIXME: Much more test coverage
+	// Actual feature tests exist in systemtest
 }

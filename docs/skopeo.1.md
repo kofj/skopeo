@@ -47,9 +47,12 @@ Most commands refer to container images, using a _transport_`:`_details_ format.
   **oci-archive:**_path_**:**_tag_
   An image _tag_ in a tar archive compliant with "Open Container Image Layout Specification" at _path_.
 
-See [containers-transports(5)](https://github.com/containers/image/blob/master/docs/containers-transports.5.md) for details.
+See [containers-transports(5)](https://github.com/containers/image/blob/main/docs/containers-transports.5.md) for details.
 
 ## OPTIONS
+
+These options should be placed before the subcommand name.
+Individual subcommands have their own options.
 
 **--command-timeout** _duration_
 
@@ -101,23 +104,33 @@ Print the version number
 | ----------------------------------------- | ------------------------------------------------------------------------------ |
 | [skopeo-copy(1)](skopeo-copy.1.md)        | Copy an image (manifest, filesystem layers, signatures) from one location to another. |
 | [skopeo-delete(1)](skopeo-delete.1.md)    | Mark the _image-name_ for later deletion by the registry's garbage collector.  |
+| [skopeo-generate-sigstore-key(1)](skopeo-generate-sigstore-key.1.md)    | Generate a sigstore public/private key pair.  |
 | [skopeo-inspect(1)](skopeo-inspect.1.md)  | Return low-level information about _image-name_ in a registry.                 |
 | [skopeo-list-tags(1)](skopeo-list-tags.1.md)  | List image names in a transport-specific collection of images.|
 | [skopeo-login(1)](skopeo-login.1.md)  | Login to a container registry. |
 | [skopeo-logout(1)](skopeo-logout.1.md)  | Logout of a container registry. |
 | [skopeo-manifest-digest(1)](skopeo-manifest-digest.1.md)    | Compute a manifest digest for a manifest-file and write it to standard output. |
-| [skopeo-standalone-sign(1)](skopeo-standalone-sign.1.md)    | Debugging tool - Publish and sign an image in one step.      |
-| [skopeo-standalone-verify(1)](skopeo-standalone-verify.1.md)| Verify an image signature.                                   |
+| [skopeo-standalone-sign(1)](skopeo-standalone-sign.1.md)    | Debugging tool - Sign an image locally without uploading.    |
+| [skopeo-standalone-verify(1)](skopeo-standalone-verify.1.md)| Debugging tool - Verify an image signature from local files. |
 | [skopeo-sync(1)](skopeo-sync.1.md)| Synchronize images between registry repositories and local directories.                |
+
+## EXIT STATUS
+`skopeo` exits with status 0 on success, non-zero on error.
+
+Details about the exit statuses:
+
+**1** Generic error, details can be found in the error message.
+
+**2** The input image cannot be found. Note that this is best effort and for remote registries the status often cannot be reliably reported.
 
 ## FILES
   **/etc/containers/policy.json**
   Default trust policy file, if **--policy** is not specified.
-  The policy format is documented in [containers-policy.json(5)](https://github.com/containers/image/blob/master/docs/containers-policy.json.5.md) .
+  The policy format is documented in [containers-policy.json(5)](https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md) .
 
   **/etc/containers/registries.d**
   Default directory containing registry configuration, if **--registries.d** is not specified.
-  The contents of this directory are documented in [containers-policy.json(5)](https://github.com/containers/image/blob/master/docs/containers-policy.json.5.md).
+  The contents of this directory are documented in [containers-registries.d(5)](https://github.com/containers/image/blob/main/docs/containers-registries.d.5.md).
 
 ## SEE ALSO
 skopeo-login(1), docker-login(1), containers-auth.json(5), containers-storage.conf(5), containers-policy.json(5), containers-transports(5)

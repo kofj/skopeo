@@ -20,22 +20,26 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// Destination is a partial implementation of private.ImageDestination for writing to an io.Writer.
+// Destination is a partial implementation of private.ImageDestination for writing to a Writer.
 type Destination struct {
 	impl.Compat
 	impl.PropertyMethodsInitialize
+	stubs.IgnoresOriginalOCIConfig
 	stubs.NoPutBlobPartialInitialize
 	stubs.NoSignaturesInitialize
 
-	archive  *Writer
-	repoTags []reference.NamedTagged
+	archive           *Writer
+	commitWithOptions func(ctx context.Context, options private.CommitOptions) error
+	repoTags          []reference.NamedTagged
 	// Other state.
 	config []byte
 	sysCtx *types.SystemContext
 }
 
 // NewDestination returns a tarfile.Destination adding images to the specified Writer.
-func NewDestination(sys *types.SystemContext, archive *Writer, transportName string, ref reference.NamedTagged) *Destination {
+// commitWithOptions implements ImageDestination.CommitWithOptions.
+func NewDestination(sys *types.SystemContext, archive *Writer, transportName string, ref reference.NamedTagged,
+	commitWithOptions func(ctx context.Context, options private.CommitOptions) error) *Destination {
 	repoTags := []reference.NamedTagged{}
 	if ref != nil {
 		repoTags = append(repoTags, ref)
@@ -57,9 +61,10 @@ func NewDestination(sys *types.SystemContext, archive *Writer, transportName str
 		NoPutBlobPartialInitialize: stubs.NoPutBlobPartialRaw(transportName),
 		NoSignaturesInitialize:     stubs.NoSignatures("Storing signatures for docker tar files is not supported"),
 
-		archive:  archive,
-		repoTags: repoTags,
-		sysCtx:   sys,
+		archive:           archive,
+		commitWithOptions: commitWithOptions,
+		repoTags:          repoTags,
+		sysCtx:            sys,
 	}
 	dest.Compat = impl.AddCompat(dest)
 	return dest
@@ -76,15 +81,15 @@ func (d *Destination) AddRepoTags(tags []reference.NamedTagged) {
 // inputInfo.MediaType describes the blob format, if known.
 // WARNING: The contents of stream are being verified on the fly.  Until stream.Read() returns io.EOF, the contents of the data SHOULD NOT be available
 // to any other readers for download using the supplied digest.
-// If stream.Read() at any time, ESPECIALLY at end of input, returns an error, PutBlob MUST 1) fail, and 2) delete any data stored so far.
-func (d *Destination) PutBlobWithOptions(ctx context.Context, stream io.Reader, inputInfo types.BlobInfo, options private.PutBlobOptions) (types.BlobInfo, error) {
+// If stream.Read() at any time, ESPECIALLY at end of input, returns an error, PutBlobWithOptions MUST 1) fail, and 2) delete any data stored so far.
+func (d *Destination) PutBlobWithOptions(ctx context.Context, stream io.Reader, inputInfo types.BlobInfo, options private.PutBlobOptions) (private.UploadedBlob, error) {
 	// Ouch, we need to stream the blob into a temporary file just to determine the size.
 	// When the layer is decompressed, we also have to generate the digest on uncompressed data.
 	if inputInfo.Size == -1 || inputInfo.Digest == "" {
 		logrus.Debugf("docker tarfile: input with unknown size, streaming to disk first ...")
 		streamCopy, cleanup, err := streamdigest.ComputeBlobInfo(d.sysCtx, stream, &inputInfo)
 		if err != nil {
-			return types.BlobInfo{}, err
+			return private.UploadedBlob{}, err
 		}
 		defer cleanup()
 		stream = streamCopy
@@ -92,47 +97,56 @@ func (d *Destination) PutBlobWithOptions(ctx context.Context, stream io.Reader, 
 	}
 
 	if err := d.archive.lock(); err != nil {
-		return types.BlobInfo{}, err
+		return private.UploadedBlob{}, err
 	}
 	defer d.archive.unlock()
 
 	// Maybe the blob has been already sent
 	ok, reusedInfo, err := d.archive.tryReusingBlobLocked(inputInfo)
 	if err != nil {
-		return types.BlobInfo{}, err
+		return private.UploadedBlob{}, err
 	}
 	if ok {
-		return reusedInfo, nil
+		return private.UploadedBlob{Digest: reusedInfo.Digest, Size: reusedInfo.Size}, nil
 	}
 
 	if options.IsConfig {
 		buf, err := iolimits.ReadAtMost(stream, iolimits.MaxConfigBodySize)
 		if err != nil {
-			return types.BlobInfo{}, fmt.Errorf("reading Config file stream: %w", err)
+			return private.UploadedBlob{}, fmt.Errorf("reading Config file stream: %w", err)
 		}
 		d.config = buf
-		if err := d.archive.sendFileLocked(d.archive.configPath(inputInfo.Digest), inputInfo.Size, bytes.NewReader(buf)); err != nil {
-			return types.BlobInfo{}, fmt.Errorf("writing Config file: %w", err)
+		configPath, err := d.archive.configPath(inputInfo.Digest)
+		if err != nil {
+			return private.UploadedBlob{}, err
+		}
+		if err := d.archive.sendFileLocked(configPath, inputInfo.Size, bytes.NewReader(buf)); err != nil {
+			return private.UploadedBlob{}, fmt.Errorf("writing Config file: %w", err)
 		}
 	} else {
-		if err := d.archive.sendFileLocked(d.archive.physicalLayerPath(inputInfo.Digest), inputInfo.Size, stream); err != nil {
-			return types.BlobInfo{}, err
+		layerPath, err := d.archive.physicalLayerPath(inputInfo.Digest)
+		if err != nil {
+			return private.UploadedBlob{}, err
+		}
+		if err := d.archive.sendFileLocked(layerPath, inputInfo.Size, stream); err != nil {
+			return private.UploadedBlob{}, err
 		}
 	}
 	d.archive.recordBlobLocked(types.BlobInfo{Digest: inputInfo.Digest, Size: inputInfo.Size})
-	return types.BlobInfo{Digest: inputInfo.Digest, Size: inputInfo.Size}, nil
+	return private.UploadedBlob{Digest: inputInfo.Digest, Size: inputInfo.Size}, nil
 }
 
 // TryReusingBlobWithOptions checks whether the transport already contains, or can efficiently reuse, a blob, and if so, applies it to the current destination
 // (e.g. if the blob is a filesystem layer, this signifies that the changes it describes need to be applied again when composing a filesystem tree).
 // info.Digest must not be empty.
-// If the blob has been successfully reused, returns (true, info, nil); info must contain at least a digest and size, and may
-// include CompressionOperation and CompressionAlgorithm fields to indicate that a change to the compression type should be
-// reflected in the manifest that will be written.
+// If the blob has been successfully reused, returns (true, info, nil).
 // If the transport can not reuse the requested blob, TryReusingBlob returns (false, {}, nil); it returns a non-nil error only on an unexpected failure.
-func (d *Destination) TryReusingBlobWithOptions(ctx context.Context, info types.BlobInfo, options private.TryReusingBlobOptions) (bool, types.BlobInfo, error) {
+func (d *Destination) TryReusingBlobWithOptions(ctx context.Context, info types.BlobInfo, options private.TryReusingBlobOptions) (bool, private.ReusedBlob, error) {
+	if !impl.OriginalCandidateMatchesTryReusingBlobOptions(options) {
+		return false, private.ReusedBlob{}, nil
+	}
 	if err := d.archive.lock(); err != nil {
-		return false, types.BlobInfo{}, err
+		return false, private.ReusedBlob{}, err
 	}
 	defer d.archive.unlock()
 
@@ -169,4 +183,14 @@ func (d *Destination) PutManifest(ctx context.Context, m []byte, instanceDigest 
 	}
 
 	return d.archive.ensureManifestItemLocked(man.LayersDescriptors, man.ConfigDescriptor.Digest, d.repoTags)
+}
+
+// CommitWithOptions marks the process of storing the image as successful and asks for the image to be persisted.
+// WARNING: This does not have any transactional semantics:
+// - Uploaded data MAY be visible to others before CommitWithOptions() is called
+// - Uploaded data MAY be removed or MAY remain around if Close() is called without CommitWithOptions() (i.e. rollback is allowed but not guaranteed)
+func (d *Destination) CommitWithOptions(ctx context.Context, options private.CommitOptions) error {
+	// This indirection exists because impl.Compat expects all ImageDestinationInternalOnly methods
+	// to be implemented in one place.
+	return d.commitWithOptions(ctx, options)
 }

@@ -36,7 +36,7 @@ load helpers
     # the output of 'inspect' lists layer digests,
     # but not the digest of the config blob ($config_digest), if any.
     layers=$(jq -r '.Layers' <<<"$inspect_local")
-    for sha in $(find $workdir -type f | xargs -l1 basename | egrep '^[0-9a-f]{64}$'); do
+    for sha in $(find $workdir -type f | xargs -l1 basename | grep -E '^[0-9a-f]{64}$'); do
         if [ "sha256:$sha" != "$config_digest" ]; then
             expect_output --from="$layers" --substring "sha256:$sha" \
                         "Locally-extracted SHA file is present in 'inspect'"
@@ -95,14 +95,15 @@ END_EXPECT
     # is created by the make-noarch-manifest script in this directory.
     img=docker://quay.io/libpod/notmyarch:20210121
 
-    # Get our host arch (what we're running on). This assumes that skopeo
-    # arch matches podman; it also assumes running podman >= April 2020
-    # (prior to that, the format keys were lower-case).
-    arch=$(podman info --format '{{.Host.Arch}}')
+    # Get our host golang arch (what we're running on, according to golang).
+    # This assumes that skopeo arch matches host arch (which it always should).
+    # Buildah is used here because it depends less on the exact system config
+    # than podman - and all we're really after is the golang-flavored arch name.
+    arch=$(go env GOARCH)
 
     # By default, 'inspect' tries to match our host os+arch. This should fail.
     run_skopeo 1 inspect $img
-    expect_output --substring "parsing manifest for image: choosing image instance: no image found in manifest list for architecture $arch, variant " \
+    expect_output --substring "parsing manifest for image: choosing image instance: no image found in manifest list for architecture \\\\\"$arch\\\\\", variant " \
                   "skopeo inspect, without --raw, fails"
 
     # With --raw, we can inspect
@@ -126,6 +127,13 @@ END_EXPECT
     repo_tags=$(jq '.RepoTags[]' <<<"$inspect_output")
     # verify that the RepoTags was empty
     expect_output --from="$repo_tags" "" "inspect --no-tags was expected to return empty RepoTags[]"
+}
+
+@test "inspect: image unknown" {
+    # non existing image
+    run_skopeo 2 inspect containers-storage:non-existing-tag
+    expect_output --substring "does not resolve to an image ID" \
+		  "skopeo inspect containers-storage:010101010101"
 }
 
 # vim: filetype=sh

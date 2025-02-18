@@ -53,10 +53,7 @@ _run_setup() {
     fi
 
     # VM's come with the distro. skopeo package pre-installed
-    dnf erase -y skopeo
-
-    # Required for testing the SIF transport
-    dnf install -y fakeroot squashfs-tools
+    dnf remove -y skopeo
 
     msg "Removing systemd-resolved from nsswitch.conf"
     # /etc/resolv.conf is already set to bypass systemd-resolvd
@@ -115,18 +112,19 @@ _run_unit() {
     make test-unit-local BUILDTAGS="$BUILDTAGS"
 }
 
-_run_integration() {
+_podman_reset() {
     # Ensure we start with a clean-slate
-    podman system reset --force
+    showrun podman system reset --force
+}
 
+_run_integration() {
+    _podman_reset
     make test-integration-local BUILDTAGS="$BUILDTAGS"
 }
 
 _run_system() {
-    # Ensure we start with a clean-slate
-    podman system reset --force
-
-    # Executes with containers required for testing.
+    _podman_reset
+    ##### Note: Test MODIFIES THE HOST SETUP #####
     make test-system-local BUILDTAGS="$BUILDTAGS"
 }
 

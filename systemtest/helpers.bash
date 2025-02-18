@@ -10,7 +10,7 @@ SKOPEO_BINARY=${SKOPEO_BINARY:-${TEST_SOURCE_DIR}/../bin/skopeo}
 SKOPEO_TIMEOUT=${SKOPEO_TIMEOUT:-300}
 
 # Default image to run as a local registry
-REGISTRY_FQIN=${SKOPEO_TEST_REGISTRY_FQIN:-quay.io/libpod/registry:2}
+REGISTRY_FQIN=${SKOPEO_TEST_REGISTRY_FQIN:-quay.io/libpod/registry:2.8.2}
 
 ###############################################################################
 # BEGIN setup/teardown
@@ -317,7 +317,7 @@ start_registry() {
             die "start_registry() invoked with testuser but no testpassword"
         fi
 
-        if ! egrep -q "^$testuser:" $AUTHDIR/htpasswd; then
+        if ! grep -E -q "^$testuser:" $AUTHDIR/htpasswd; then
             htpasswd -Bbn $testuser $testpassword >> $AUTHDIR/htpasswd
         fi
 

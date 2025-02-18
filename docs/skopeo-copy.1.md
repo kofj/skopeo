@@ -20,6 +20,8 @@ automatically inherit any parts of the source name.
 
 ## OPTIONS
 
+See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
+
 **--additional-tag**=_strings_
 
 Additional tags (supports docker-archive).
@@ -56,7 +58,9 @@ After copying the image, write the digest of the resulting image to the file.
 
 **--preserve-digests**
 
-Preserve the digests during copying. Fail if the digest cannot be preserved. Consider using `--all` at the same time.
+Preserve the digests during copying. Fail if the digest cannot be preserved.
+
+This option does not change what will be copied; consider using `--all` at the same time.
 
 **--encrypt-layer** _ints_
 
@@ -92,6 +96,11 @@ Do not copy signatures, if any, from _source-image_. Necessary when copying a si
 **--sign-by** _key-id_
 
 Add a “simple signing” signature using that key ID for an image name corresponding to _destination-image_
+
+**--sign-by-sigstore** _param-file_
+
+Add a sigstore signature based on the options in the specified containers sigstore signing parameter file, _param-file_.
+See containers-sigstore-signing-params.yaml(5) for details about the file format.
 
 **--sign-by-sigstore-private-key** _path_
 
@@ -173,7 +182,9 @@ Existing signatures, if any, are preserved as well.
 
 **--dest-compress-format** _format_
 
-Specifies the compression format to use.  Supported values are: `gzip` and `zstd`.
+Specifies the compression format to use.  Supported values are: `gzip`, `zstd` and `zstd:chunked`.
+`zstd:chunked` is incompatible with encrypting images,
+and will be treated as `zstd` with a warning in that case.
 
 **--dest-compress-level** _format_
 
@@ -193,7 +204,11 @@ Precompute digests to ensure layers are not uploaded that already exist on the d
 
 **--retry-times**
 
-The number of times to retry. Retry wait time will be exponentially increased based on the number of failed attempts.
+The number of times to retry.
+
+**--retry-delay**
+
+Fixed delay between retries. If not set (or set to 0s), retry wait time will be exponentially increased based on the number of failed attempts.
 
 **--src-username**
 
@@ -211,15 +226,19 @@ The username to access the destination registry.
 
 The password to access the destination registry.
 
+**--image-parallel-copies** _n_
+
+Maximum number of image layers to be copied (pulled/pushed) simultaneously. Not setting this field will fall back to containers/image defaults.
+
 ## EXAMPLES
 
 To just copy an image from one registry to another:
-```sh
+```console
 $ skopeo copy docker://quay.io/skopeo/stable:latest docker://registry.example.com/skopeo:latest
 ```
 
 To copy the layers of the docker.io busybox image to a local directory:
-```sh
+```console
 $ mkdir -p /var/lib/images/busybox
 $ skopeo copy docker://busybox:latest dir:/var/lib/images/busybox
 $ ls /var/lib/images/busybox/*
@@ -228,42 +247,46 @@ $ ls /var/lib/images/busybox/*
   /tmp/busybox/8ddc19f16526912237dd8af81971d5e4dd0587907234be2b83e249518d5b673f.tar
 ```
 
-To copy and sign an image:
+To create an archive consumable by `docker load` (but note that using a registry is almost always more efficient):
+```console
+$ skopeo copy docker://busybox:latest docker-archive:archive-file.tar:busybox:latest
+```
 
-```sh
-# skopeo copy --sign-by dev@example.com containers-storage:example/busybox:streaming docker://example/busybox:gold
+To copy and sign an image:
+```console
+$ skopeo copy --sign-by dev@example.com containers-storage:example/busybox:streaming docker://example/busybox:gold
 ```
 
 To encrypt an image:
-```sh
-skopeo copy docker://docker.io/library/nginx:1.17.8 oci:local_nginx:1.17.8
+```console
+$ skopeo copy docker://docker.io/library/nginx:1.17.8 oci:local_nginx:1.17.8
 
-openssl genrsa -out private.key 1024
-openssl rsa -in private.key -pubout > public.key
+$ openssl genrsa -out private.key 1024
+$ openssl rsa -in private.key -pubout > public.key
 
-skopeo  copy --encryption-key jwe:./public.key oci:local_nginx:1.17.8 oci:try-encrypt:encrypted
+$ skopeo copy --encryption-key jwe:./public.key oci:local_nginx:1.17.8 oci:try-encrypt:encrypted
 ```
 
 To decrypt an image:
-```sh
-skopeo copy --decryption-key ./private.key oci:try-encrypt:encrypted oci:try-decrypt:decrypted
+```console
+$ skopeo copy --decryption-key ./private.key oci:try-encrypt:encrypted oci:try-decrypt:decrypted
 ```
 
 To copy encrypted image without decryption:
-```sh
-skopeo copy oci:try-encrypt:encrypted oci:try-encrypt-copy:encrypted
+```console
+$ skopeo copy oci:try-encrypt:encrypted oci:try-encrypt-copy:encrypted
 ```
 
 To decrypt an image that requires more than one key:
-```sh
-skopeo copy --decryption-key ./private1.key --decryption-key ./private2.key --decryption-key ./private3.key oci:try-encrypt:encrypted oci:try-decrypt:decrypted
+```console
+$ skopeo copy --decryption-key ./private1.key --decryption-key ./private2.key --decryption-key ./private3.key oci:try-encrypt:encrypted oci:try-decrypt:decrypted
 ```
 
 Container images can also be partially encrypted by specifying the index of the layer. Layers are 0-indexed indices, with support for negative indexing. i.e. 0 is the first layer, -1 is the last layer.
 
 Let's say out of 3 layers that the image `docker.io/library/nginx:1.17.8` is made up of, we only want to encrypt the 2nd layer,
-```sh
-skopeo  copy --encryption-key jwe:./public.key --encrypt-layer 1 oci:local_nginx:1.17.8 oci:try-encrypt:encrypted
+```console
+$ skopeo copy --encryption-key jwe:./public.key --encrypt-layer 1 oci:local_nginx:1.17.8 oci:try-encrypt:encrypted
 ```
 
 ## SEE ALSO

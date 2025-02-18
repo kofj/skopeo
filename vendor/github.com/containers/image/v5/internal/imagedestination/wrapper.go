@@ -14,6 +14,7 @@ import (
 // wrapped provides the private.ImageDestination operations
 // for a destination that only implements types.ImageDestination
 type wrapped struct {
+	stubs.IgnoresOriginalOCIConfig
 	stubs.NoPutBlobPartialInitialize
 
 	types.ImageDestination
@@ -28,7 +29,7 @@ type wrapped struct {
 //
 // NOTE: The returned API MUST NOT be a public interface (it can be either just a struct
 // with public methods, or perhaps a private interface), so that we can add methods
-// without breaking any external implementors of a public interface.
+// without breaking any external implementers of a public interface.
 func FromPublic(dest types.ImageDestination) private.ImageDestination {
 	if dest2, ok := dest.(private.ImageDestination); ok {
 		return dest2
@@ -46,20 +47,40 @@ func FromPublic(dest types.ImageDestination) private.ImageDestination {
 // inputInfo.MediaType describes the blob format, if known.
 // WARNING: The contents of stream are being verified on the fly.  Until stream.Read() returns io.EOF, the contents of the data SHOULD NOT be available
 // to any other readers for download using the supplied digest.
-// If stream.Read() at any time, ESPECIALLY at end of input, returns an error, PutBlob MUST 1) fail, and 2) delete any data stored so far.
-func (w *wrapped) PutBlobWithOptions(ctx context.Context, stream io.Reader, inputInfo types.BlobInfo, options private.PutBlobOptions) (types.BlobInfo, error) {
-	return w.PutBlob(ctx, stream, inputInfo, options.Cache, options.IsConfig)
+// If stream.Read() at any time, ESPECIALLY at end of input, returns an error, PutBlobWithOptions MUST 1) fail, and 2) delete any data stored so far.
+func (w *wrapped) PutBlobWithOptions(ctx context.Context, stream io.Reader, inputInfo types.BlobInfo, options private.PutBlobOptions) (private.UploadedBlob, error) {
+	res, err := w.PutBlob(ctx, stream, inputInfo, options.Cache, options.IsConfig)
+	if err != nil {
+		return private.UploadedBlob{}, err
+	}
+	return private.UploadedBlob{
+		Digest: res.Digest,
+		Size:   res.Size,
+	}, nil
 }
 
 // TryReusingBlobWithOptions checks whether the transport already contains, or can efficiently reuse, a blob, and if so, applies it to the current destination
 // (e.g. if the blob is a filesystem layer, this signifies that the changes it describes need to be applied again when composing a filesystem tree).
 // info.Digest must not be empty.
-// If the blob has been successfully reused, returns (true, info, nil); info must contain at least a digest and size, and may
-// include CompressionOperation and CompressionAlgorithm fields to indicate that a change to the compression type should be
-// reflected in the manifest that will be written.
+// If the blob has been successfully reused, returns (true, info, nil).
 // If the transport can not reuse the requested blob, TryReusingBlob returns (false, {}, nil); it returns a non-nil error only on an unexpected failure.
-func (w *wrapped) TryReusingBlobWithOptions(ctx context.Context, info types.BlobInfo, options private.TryReusingBlobOptions) (bool, types.BlobInfo, error) {
-	return w.TryReusingBlob(ctx, info, options.Cache, options.CanSubstitute)
+func (w *wrapped) TryReusingBlobWithOptions(ctx context.Context, info types.BlobInfo, options private.TryReusingBlobOptions) (bool, private.ReusedBlob, error) {
+	if options.RequiredCompression != nil {
+		return false, private.ReusedBlob{}, nil
+	}
+	reused, blob, err := w.TryReusingBlob(ctx, info, options.Cache, options.CanSubstitute)
+	if !reused || err != nil {
+		return reused, private.ReusedBlob{}, err
+	}
+	return true, private.ReusedBlob{
+		Digest:               blob.Digest,
+		Size:                 blob.Size,
+		CompressionOperation: blob.CompressionOperation,
+		CompressionAlgorithm: blob.CompressionAlgorithm,
+		// CompressionAnnotations could be set to blob.Annotations, but that may contain unrelated
+		// annotations, and we didn’t use the blob.Annotations field previously, so we’ll
+		// continue not using it.
+	}, nil
 }
 
 // PutSignaturesWithFormat writes a set of signatures to the destination.
@@ -76,4 +97,12 @@ func (w *wrapped) PutSignaturesWithFormat(ctx context.Context, signatures []sign
 		simpleSigs = append(simpleSigs, simpleSig.UntrustedSignature())
 	}
 	return w.PutSignatures(ctx, simpleSigs, instanceDigest)
+}
+
+// CommitWithOptions marks the process of storing the image as successful and asks for the image to be persisted.
+// WARNING: This does not have any transactional semantics:
+// - Uploaded data MAY be visible to others before CommitWithOptions() is called
+// - Uploaded data MAY be removed or MAY remain around if Close() is called without CommitWithOptions() (i.e. rollback is allowed but not guaranteed)
+func (w *wrapped) CommitWithOptions(ctx context.Context, options private.CommitOptions) error {
+	return w.Commit(ctx, options.UnparsedToplevel)
 }

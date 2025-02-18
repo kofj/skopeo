@@ -55,6 +55,22 @@ sudo apk add skopeo
 
 [Package Info](https://pkgs.alpinelinux.org/packages?name=skopeo)
 
+### Gentoo
+
+```sh
+sudo emerge app-containers/skopeo
+```
+
+[Package Info](https://packages.gentoo.org/packages/app-containers/skopeo)
+
+### Arch Linux
+
+```sh
+sudo pacman -S skopeo
+```
+
+[Package Info](https://archlinux.org/packages/extra/x86_64/skopeo/)
+
 ### macOS
 
 ```sh
@@ -106,7 +122,6 @@ Skopeo has not yet been packaged for Windows. There is an [open feature
 request](https://github.com/containers/skopeo/issues/715) and contributions are
 always welcome.
 
-
 ## Container Images
 
 Skopeo container images are available at `quay.io/skopeo/stable:latest`.
@@ -116,14 +131,15 @@ For example,
 podman run docker://quay.io/skopeo/stable:latest copy --help
 ```
 
-[Read more](./contrib/skopeoimage/README.md).
+The skopeo container image build context and automation are
+located at [https://github.com/containers/image_build/tree/main/skopeo](https://github.com/containers/image_build/tree/main/skopeo)
 
 
 ## Building from Source
 
 Otherwise, read on for building and installing it from source:
 
-To build the `skopeo` binary you need at least Go 1.12.
+To build the `skopeo` binary you need at least Go 1.22.
 
 There are two ways to build skopeo: in a container, or locally without a
 container. Choose the one which better matches your needs and environment.
@@ -141,12 +157,12 @@ Install the necessary dependencies:
 
 ```bash
 # Fedora:
-sudo dnf install gpgme-devel libassuan-devel btrfs-progs-devel device-mapper-devel
+sudo dnf install gpgme-devel libassuan-devel btrfs-progs-devel
 ```
 
 ```bash
 # Ubuntu (`libbtrfs-dev` requires Ubuntu 18.10 and above):
-sudo apt install libgpgme-dev libassuan-dev libbtrfs-dev libdevmapper-dev pkg-config
+sudo apt install libgpgme-dev libassuan-dev libbtrfs-dev pkg-config
 ```
 
 ```bash
@@ -156,7 +172,12 @@ brew install gpgme
 
 ```bash
 # openSUSE:
-sudo zypper install libgpgme-devel device-mapper-devel libbtrfs-devel glib2-devel
+sudo zypper install libgpgme-devel libbtrfs-devel glib2-devel
+```
+
+```bash
+# Arch Linux:
+sudo pacman -S base-devel gpgme btrfs-progs
 ```
 
 Make sure to clone this repository in your `GOPATH` - otherwise compilation fails.
@@ -172,6 +193,22 @@ Building of documentation requires `go-md2man`. On systems that do not have this
 document generation can be skipped by passing `DISABLE_DOCS=1`:
 ```
 DISABLE_DOCS=1 make
+```
+
+#### Additional prerequisites
+
+In order to dynamically link against system libraries and avoid compilation errors the ```CGO_ENABLED='1'``` flag must be enabled. You can easily check by ```go env | grep CGO_ENABLED```.
+
+An alternative would be to set the `BUILDTAGS=containers_image_openpgp` (this removes the dependency on `libgpgme` and its companion libraries).
+
+### Cross-compilation
+
+For cross-building skopeo, use the command `make bin/skopeo.OS.ARCH`, where OS represents
+the target operating system and ARCH stands for the desired architecture. For instance,
+to build skopeo for RISC-V 64-bit Linux, execute:
+
+```bash
+make bin/skopeo.linux.riscv64
 ```
 
 ### Building documentation
@@ -230,20 +267,13 @@ sudo make install
 ### Building a static binary
 
 There have been efforts in the past to produce and maintain static builds, but the maintainers prefer to run Skopeo using distro packages or within containers. This is because static builds of Skopeo tend to be unreliable and functionally restricted. Specifically:
-- Some features of Skopeo depend on non-Go libraries like `libgpgme` and `libdevmapper`.
+- Some features of Skopeo depend on non-Go libraries like `libgpgme`.
 - Generating static Go binaries uses native Go libraries, which don't support e.g. `.local` or LDAP-based name resolution.
 
 That being said, if you would like to build Skopeo statically, you might be able to do it by combining all the following steps.
 - Export environment variable `CGO_ENABLED=0` (disabling CGO causes Go to prefer native libraries when possible, instead of dynamically linking against system libraries).
-- Set the `BUILDTAGS=containers_image_openpgp` Make variable (this remove the dependency on `libgpgme` and its companion libraries).
-- Clear the `GO_DYN_FLAGS` Make variable (which otherwise seems to force the creation of a dynamic executable).
-
-The following command implements these steps to produce a static binary in the `bin` subdirectory of the repository:
-
-```bash
-docker run -v $PWD:/src -w /src -e CGO_ENABLED=0 golang \
-make BUILDTAGS=containers_image_openpgp GO_DYN_FLAGS=
-```
+- Set the `BUILDTAGS=containers_image_openpgp` Make variable (this removes the dependency on `libgpgme` and its companion libraries).
+- Clear the `GO_DYN_FLAGS` Make variable if even a dependency on the ELF interpreter is undesirable.
 
 Keep in mind that the resulting binary is unsupported and might crash randomly. Only use if you know what you're doing!
 

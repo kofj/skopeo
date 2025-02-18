@@ -1,10 +1,10 @@
 % skopeo-standalone-verify(1)
 
 ## NAME
-skopeo\-standalone\-verify - Verify an image signature.
+skopeo\-standalone\-verify - Debugging tool - Verify an image signature from local files.
 
 ## SYNOPSIS
-**skopeo standalone-verify** _manifest_ _docker-reference_ _key-fingerprint_ _signature_
+**skopeo standalone-verify** _manifest_ _docker-reference_ _key-fingerprints_ _signature_
 
 ## DESCRIPTION
 
@@ -16,7 +16,7 @@ as per containers-policy.json(5).
 
   _docker-reference_ A docker reference expected to identify the image in the signature
 
-  _key-fingerprint_ Expected identity of the signing key
+  _key-fingerprints_ Identities of trusted signing keys (comma separated), or "any" to trust any known key when using a public key file
 
   _signature_ Path to signature file
 
@@ -24,13 +24,19 @@ as per containers-policy.json(5).
 
 ## OPTIONS
 
+See also [skopeo(1)](skopeo.1.md) for options placed before the subcommand name.
+
 **--help**, **-h**
 
 Print usage statement
 
+**--public-key-file** _public key file_
+
+File containing the public keys to use when verifying signatures. If this is not specified, keys from the GPG homedir are used.
+
 ## EXAMPLES
 
-```sh
+```console
 $ skopeo standalone-verify busybox-manifest.json registry.example.com/example/busybox 1D8230F6CDB6A06716E414C1DB72F2188BB46CC8  busybox.signature
 Signature verified, digest sha256:20bf21ed457b390829cdbeec8795a7bea1626991fda603e0d01b4e7f60427e55
 ```

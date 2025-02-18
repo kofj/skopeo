@@ -34,15 +34,19 @@ func NewReaderFromFile(sys *types.SystemContext, path string) (*Reader, error) {
 	}
 	defer file.Close()
 
-	// If the file is already not compressed we can just return the file itself
+	// If the file is seekable and already not compressed we can just return the file itself
 	// as a source. Otherwise we pass the stream to NewReaderFromStream.
-	stream, isCompressed, err := compression.AutoDecompress(file)
-	if err != nil {
-		return nil, fmt.Errorf("detecting compression for file %q: %w", path, err)
-	}
-	defer stream.Close()
-	if !isCompressed {
-		return newReader(path, false)
+	var stream io.Reader = file
+	if _, err := file.Seek(0, io.SeekCurrent); err == nil { // seeking is possible
+		decompressed, isCompressed, err := compression.AutoDecompress(file)
+		if err != nil {
+			return nil, fmt.Errorf("detecting compression for file %q: %w", path, err)
+		}
+		defer decompressed.Close()
+		stream = decompressed
+		if !isCompressed {
+			return newReader(path, false)
+		}
 	}
 	return NewReaderFromStream(sys, stream)
 }
@@ -53,7 +57,7 @@ func NewReaderFromFile(sys *types.SystemContext, path string) (*Reader, error) {
 // The caller should call .Close() on the returned archive when done.
 func NewReaderFromStream(sys *types.SystemContext, inputStream io.Reader) (*Reader, error) {
 	// Save inputStream to a temporary file
-	tarCopyFile, err := os.CreateTemp(tmpdir.TemporaryDirectoryForBigFiles(sys), "docker-tar")
+	tarCopyFile, err := tmpdir.CreateBigFileTemp(sys, "docker-tar")
 	if err != nil {
 		return nil, fmt.Errorf("creating temporary file: %w", err)
 	}
@@ -227,7 +231,7 @@ func (r *Reader) openTarComponent(componentPath string) (io.ReadCloser, error) {
 	}
 
 	if !header.FileInfo().Mode().IsRegular() {
-		return nil, fmt.Errorf("Error reading tar archive component %s: not a regular file", header.Name)
+		return nil, fmt.Errorf("Error reading tar archive component %q: not a regular file", header.Name)
 	}
 	succeeded = true
 	return &tarReadCloser{Reader: tarReader, backingFile: f}, nil
@@ -258,7 +262,7 @@ func findTarComponent(inputFile io.Reader, componentPath string) (*tar.Reader, *
 func (r *Reader) readTarComponent(path string, limit int) ([]byte, error) {
 	file, err := r.openTarComponent(path)
 	if err != nil {
-		return nil, fmt.Errorf("loading tar component %s: %w", path, err)
+		return nil, fmt.Errorf("loading tar component %q: %w", path, err)
 	}
 	defer file.Close()
 	bytes, err := iolimits.ReadAtMost(file, limit)

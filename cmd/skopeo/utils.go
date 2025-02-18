@@ -7,14 +7,19 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	commonFlag "github.com/containers/common/pkg/flag"
 	"github.com/containers/common/pkg/retry"
 	"github.com/containers/image/v5/directory"
 	"github.com/containers/image/v5/manifest"
+	ocilayout "github.com/containers/image/v5/oci/layout"
 	"github.com/containers/image/v5/pkg/compression"
+	"github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
+	dockerdistributionerrcode "github.com/docker/distribution/registry/api/errcode"
+	dockerdistributionapi "github.com/docker/distribution/registry/api/v2"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -22,7 +27,7 @@ import (
 	"golang.org/x/term"
 )
 
-// errorShouldDisplayUsage is a subtype of error used by command handlers to indicate that cli.ShowSubcommandHelp should be called.
+// errorShouldDisplayUsage is a subtype of error used by command handlers to indicate that the command’s help should be included.
 type errorShouldDisplayUsage struct {
 	error
 }
@@ -44,7 +49,7 @@ func noteCloseFailure(err error, description string, closeErr error) error {
 	if err == nil {
 		return fmt.Errorf("%s: %w", description, closeErr)
 	}
-	// In this case we prioritize the primary error for use with %w; closeErr is usually less relevant, or might be a consequence of the primary erorr.
+	// In this case we prioritize the primary error for use with %w; closeErr is usually less relevant, or might be a consequence of the primary error.
 	return fmt.Errorf("%w (%s: %v)", err, description, closeErr)
 }
 
@@ -58,7 +63,8 @@ func commandAction(handler func(args []string, stdout io.Writer) error) func(cmd
 		err := handler(args, c.OutOrStdout())
 		var shouldDisplayUsage errorShouldDisplayUsage
 		if errors.As(err, &shouldDisplayUsage) {
-			return c.Help()
+			c.SetOut(c.ErrOrStderr()) // This mutates c, but we are failing anyway.
+			_ = c.Help()              // Even if this failed, we prefer to report the original error
 		}
 		return err
 	}
@@ -179,6 +185,7 @@ func retryFlags() (pflag.FlagSet, *retry.Options) {
 	opts := retry.Options{}
 	fs := pflag.FlagSet{}
 	fs.IntVar(&opts.MaxRetry, "retry-times", 0, "the number of times to possibly retry")
+	fs.DurationVar(&opts.Delay, "retry-delay", 0*time.Second, "Fixed delay between retries. If not set, retry uses an exponential backoff delay.")
 	return fs, &opts
 }
 
@@ -315,14 +322,11 @@ func parseCreds(creds string) (string, string, error) {
 	if creds == "" {
 		return "", "", errors.New("credentials can't be empty")
 	}
-	up := strings.SplitN(creds, ":", 2)
-	if len(up) == 1 {
-		return up[0], "", nil
-	}
-	if up[0] == "" {
+	username, password, _ := strings.Cut(creds, ":") // Sets password to "" if there is no ":"
+	if username == "" {
 		return "", "", errors.New("username can't be empty")
 	}
-	return up[0], up[1], nil
+	return username, password, nil
 }
 
 func getDockerAuth(creds string) (*types.DockerAuthConfig, error) {
@@ -408,4 +412,24 @@ func promptForPassphrase(privateKeyFile string, stdin, stdout *os.File) (string,
 	}
 	fmt.Fprintf(stdout, "\n")
 	return string(passphrase), nil
+}
+
+// isNotFoundImageError heuristically attempts to determine whether an error
+// is saying the remote source couldn't find the image (as opposed to an
+// authentication error, an I/O error etc.)
+// TODO drive this into containers/image properly
+func isNotFoundImageError(err error) bool {
+	return isDockerManifestUnknownError(err) ||
+		errors.Is(err, storage.ErrNoSuchImage) ||
+		errors.Is(err, ocilayout.ImageNotFoundError{})
+}
+
+// isDockerManifestUnknownError is a copy of code from containers/image,
+// please update there first.
+func isDockerManifestUnknownError(err error) bool {
+	var ec dockerdistributionerrcode.ErrorCoder
+	if !errors.As(err, &ec) {
+		return false
+	}
+	return ec.ErrorCode() == dockerdistributionapi.ErrorCodeManifestUnknown
 }
